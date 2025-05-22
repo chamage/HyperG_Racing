@@ -17,7 +17,6 @@ import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.Quaternion;
 import com.badlogic.gdx.math.Vector3;
-import com.badlogic.gdx.utils.Array;
 
 public class DemoRacing3D implements Screen {
 
@@ -36,6 +35,7 @@ public class DemoRacing3D implements Screen {
     private final float ACCELERATION = 15f;
     private final float DECELERATION = 20f;
     private final float TURN_SPEED = 60f;
+    private GearState currentGear = GearState.NEUTRAL;
 
     // Camera properties
     private final Vector3 cameraOffset = new Vector3(0f, 4f, -8f);
@@ -49,6 +49,9 @@ public class DemoRacing3D implements Screen {
     private final float TILE_THICKNESS = 0.1f;
     private int lastProcessedCenterTileX = Integer.MIN_VALUE;
     private int lastProcessedCenterTileZ = Integer.MIN_VALUE;
+
+    // HUD stuff
+    private GameHUD gameHUD;
 
     @Override
     public void show() {
@@ -72,7 +75,6 @@ public class DemoRacing3D implements Screen {
         environment.add(new DirectionalLight().set(0.8f, 0.8f, 0.8f, -1f, -0.8f, -0.2f));
 
         lightGrayMaterial = new Material(ColorAttribute.createDiffuse(Color.LIGHT_GRAY));
-
         tileModel = modelBuilder.createBox(TILE_SIZE, TILE_THICKNESS, TILE_SIZE, lightGrayMaterial, Usage.Position | Usage.Normal);
 
         int gridSize = VISIBLE_TILES_RADIUS * 2 + 1;
@@ -83,6 +85,9 @@ public class DemoRacing3D implements Screen {
             }
         }
         updateInfiniteGround(true);
+
+        gameHUD = new GameHUD();
+        Gdx.input.setInputProcessor(gameHUD.getStage());
     }
 
     private void updateInfiniteGround(boolean forceUpdate) {
@@ -133,49 +138,112 @@ public class DemoRacing3D implements Screen {
         updateInfiniteGround(false);
         updateCamera();
 
+        if (gameHUD != null) {
+            gameHUD.updateSpeed(carSpeed);
+            gameHUD.updateGear(currentGear);
+        }
+
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         Gdx.gl.glClearColor(0.3f, 0.5f, 0.8f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
 
         modelBatch.begin(camera);
-
         int gridSize = VISIBLE_TILES_RADIUS * 2 + 1;
         for (int i = 0; i < gridSize; i++) {
             for (int j = 0; j < gridSize; j++) {
                 modelBatch.render(visibleTileInstances[i][j], environment);
             }
         }
-
         modelBatch.render(carInstance, environment);
         modelBatch.end();
+
+        if (gameHUD != null) {
+            gameHUD.render(delta);
+        }
     }
 
     private void handleInput(float deltaTime) {
-        if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP)) {
-            carSpeed += ACCELERATION * deltaTime;
-            if (carSpeed > MAX_SPEED) carSpeed = MAX_SPEED;
-        } else if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN)) {
-            carSpeed -= ACCELERATION * deltaTime * 1.5f;
-            if (carSpeed < -MAX_SPEED / 2f) carSpeed = -MAX_SPEED / 2f;
-        } else {
-            if (carSpeed > 0) {
-                carSpeed -= DECELERATION * deltaTime;
-                if (carSpeed < 0) carSpeed = 0;
-            } else if (carSpeed < 0) {
-                carSpeed += DECELERATION * deltaTime;
-                if (carSpeed > 0) carSpeed = 0;
-            }
+        boolean wPressed = Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP);
+        boolean sPressed = Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN);
+        boolean wJustPressed = Gdx.input.isKeyJustPressed(Input.Keys.W) || Gdx.input.isKeyJustPressed(Input.Keys.UP);
+        boolean sJustPressed = Gdx.input.isKeyJustPressed(Input.Keys.S) || Gdx.input.isKeyJustPressed(Input.Keys.DOWN);
+
+        if (carSpeed > 0 && currentGear != GearState.FORWARD) {
+            currentGear = GearState.FORWARD;
+        } else if (carSpeed < 0 && currentGear != GearState.REVERSE) {
+            currentGear = GearState.REVERSE;
+        } else if (carSpeed == 0 && (currentGear == GearState.FORWARD || currentGear == GearState.REVERSE)) {
+            currentGear = GearState.NEUTRAL;
         }
+
+        switch (currentGear) {
+            case FORWARD:
+                if (wPressed) {
+                    carSpeed += ACCELERATION * deltaTime;
+                    if (carSpeed > MAX_SPEED) carSpeed = MAX_SPEED;
+                }
+                else if (sPressed) {
+                    carSpeed -= ACCELERATION * deltaTime * 1.5f;
+                    if (carSpeed <= 0) {
+                        carSpeed = 0;
+                        currentGear = GearState.NEUTRAL;
+                    }
+                }
+                else {
+                    carSpeed -= DECELERATION * deltaTime;
+                    if (carSpeed <= 0) {
+                        carSpeed = 0;
+                        currentGear = GearState.NEUTRAL;
+                    }
+                }
+                break;
+
+            case NEUTRAL:
+                if (wJustPressed || (wPressed && carSpeed ==0)) {
+                    currentGear = GearState.FORWARD;
+                    carSpeed += ACCELERATION * deltaTime;
+                } else if (sJustPressed || (sPressed && carSpeed ==0)) {
+                    currentGear = GearState.REVERSE;
+                    carSpeed -= ACCELERATION * deltaTime * 1.0f;
+                }
+                if(currentGear == GearState.NEUTRAL) carSpeed = 0;
+                break;
+
+            case REVERSE:
+                if (sPressed) {
+                    carSpeed -= ACCELERATION * deltaTime * 1.0f;
+                    if (carSpeed < -MAX_SPEED / 2f) carSpeed = -MAX_SPEED / 2f;
+                }
+                else if (wPressed) {
+                    carSpeed += ACCELERATION * deltaTime * 1.5f;
+                    if (carSpeed >= 0) {
+                        carSpeed = 0;
+                        currentGear = GearState.NEUTRAL;
+                    }
+                }
+                else {
+                    carSpeed += DECELERATION * deltaTime;
+                    if (carSpeed >= 0) {
+                        carSpeed = 0;
+                        currentGear = GearState.NEUTRAL;
+                    }
+                }
+                break;
+        }
+
+        if (carSpeed > MAX_SPEED) carSpeed = MAX_SPEED;
+        if (carSpeed < -MAX_SPEED / 2f) carSpeed = -MAX_SPEED / 2f;
 
         if (Math.abs(carSpeed) > 0.1f) {
             float currentTurnRatio = Math.min(1f, Math.abs(carSpeed) / (MAX_SPEED * 0.5f));
             float actualTurnSpeed = TURN_SPEED * currentTurnRatio;
+            float turnDirectionMultiplier = (currentGear == GearState.REVERSE) ? -1f : 1f;
 
             if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
-                carRotation.mul(new Quaternion(Vector3.Y, actualTurnSpeed * deltaTime));
+                carRotation.mul(new Quaternion(Vector3.Y, actualTurnSpeed * deltaTime * turnDirectionMultiplier));
             }
             if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
-                carRotation.mul(new Quaternion(Vector3.Y, -actualTurnSpeed * deltaTime));
+                carRotation.mul(new Quaternion(Vector3.Y, -actualTurnSpeed * deltaTime * turnDirectionMultiplier));
             }
         }
     }
@@ -199,6 +267,7 @@ public class DemoRacing3D implements Screen {
         desiredPosition.add(carPosition);
 
         camera.position.set(desiredPosition);
+
         Vector3 lookAtPoint = new Vector3(carPosition.x, carPosition.y + 0.2f, carPosition.z);
         camera.lookAt(lookAtPoint);
         camera.up.set(Vector3.Y);
@@ -211,6 +280,9 @@ public class DemoRacing3D implements Screen {
             camera.viewportWidth = width;
             camera.viewportHeight = height;
             camera.update();
+        }
+        if (gameHUD != null) {
+            gameHUD.resize(width, height);
         }
     }
 
@@ -228,5 +300,9 @@ public class DemoRacing3D implements Screen {
         modelBatch.dispose();
         carModel.dispose();
         if (tileModel != null) tileModel.dispose();
+
+        if (gameHUD != null) {
+            gameHUD.dispose();
+        }
     }
 }

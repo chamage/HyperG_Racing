@@ -38,28 +38,27 @@ public class DemoRacing3D implements Screen {
     private final float TURN_SPEED = 60f;
 
     // Camera properties
-    private final Vector3 cameraOffset = new Vector3(0f, 5f, -10f);
+    private final Vector3 cameraOffset = new Vector3(0f, 4f, -8f);
 
     // Ground properties
-    private Array<ModelInstance> groundTiles;
-    private Model lightGrayTileModel;
-    private Model darkGrayTileModel;
+    private Model tileModel;
+    private Material lightGrayMaterial;
+    private ModelInstance[][] visibleTileInstances;
+    private final int VISIBLE_TILES_RADIUS = 15;
     private final float TILE_SIZE = 5f;
-    private final int TILES_COUNT_X = 20;
-    private final int TILES_COUNT_Z = 20;
     private final float TILE_THICKNESS = 0.1f;
+    private int lastProcessedCenterTileX = Integer.MIN_VALUE;
+    private int lastProcessedCenterTileZ = Integer.MIN_VALUE;
 
     @Override
     public void show() {
         modelBatch = new ModelBatch();
         ModelBuilder modelBuilder = new ModelBuilder();
 
-        // 1. Setting up a 3D camera
         camera = new PerspectiveCamera(70, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera.near = 1f;
-        camera.far = 300f;
+        camera.far = (VISIBLE_TILES_RADIUS + 5) * TILE_SIZE;
 
-        // 2. Creating the model of the car
         Material carMaterial = new Material(ColorAttribute.createDiffuse(Color.RED));
         carModel = modelBuilder.createBox(1f, 0.5f, 2.5f, carMaterial, Usage.Position | Usage.Normal);
         carInstance = new ModelInstance(carModel);
@@ -68,43 +67,70 @@ public class DemoRacing3D implements Screen {
         carRotation = new Quaternion();
         carInstance.transform.setToTranslation(carPosition).rotate(carRotation);
 
-        // 3. Setting up the environment
         environment = new Environment();
         environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.4f, 0.4f, 0.4f, 1f));
         environment.add(new DirectionalLight().set(0.8f, 0.8f, 0.8f, -1f, -0.8f, -0.2f));
 
-        // 4. Creating the tiles
-        groundTiles = new Array<>();
-        Material lightGrayMaterial = new Material(ColorAttribute.createDiffuse(Color.LIGHT_GRAY));
-        Material darkGrayMaterial = new Material(ColorAttribute.createDiffuse(Color.DARK_GRAY));
+        lightGrayMaterial = new Material(ColorAttribute.createDiffuse(Color.LIGHT_GRAY));
 
-        lightGrayTileModel = modelBuilder.createBox(TILE_SIZE, TILE_THICKNESS, TILE_SIZE, lightGrayMaterial, Usage.Position | Usage.Normal);
-        darkGrayTileModel = modelBuilder.createBox(TILE_SIZE, TILE_THICKNESS, TILE_SIZE, darkGrayMaterial, Usage.Position | Usage.Normal);
+        tileModel = modelBuilder.createBox(TILE_SIZE, TILE_THICKNESS, TILE_SIZE, lightGrayMaterial, Usage.Position | Usage.Normal);
 
-        float groundTileCenterY = -TILE_THICKNESS / 2.0f;
+        int gridSize = VISIBLE_TILES_RADIUS * 2 + 1;
+        visibleTileInstances = new ModelInstance[gridSize][gridSize];
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                visibleTileInstances[i][j] = new ModelInstance(tileModel);
+            }
+        }
+        updateInfiniteGround(true);
+    }
 
-        for (int i = 0; i < TILES_COUNT_X; i++) {
-            for (int j = 0; j < TILES_COUNT_Z; j++) {
-                ModelInstance tileInstance;
-                if ((i + j) % 2 == 0) {
-                    tileInstance = new ModelInstance(lightGrayTileModel);
-                } else {
-                    tileInstance = new ModelInstance(darkGrayTileModel);
+    private void updateInfiniteGround(boolean forceUpdate) {
+        int centerWorldTileX = (int) Math.round(carPosition.x / TILE_SIZE);
+        int centerWorldTileZ = (int) Math.round(carPosition.z / TILE_SIZE);
+
+        if (!forceUpdate && centerWorldTileX == lastProcessedCenterTileX && centerWorldTileZ == lastProcessedCenterTileZ) {
+            return;
+        }
+
+        lastProcessedCenterTileX = centerWorldTileX;
+        lastProcessedCenterTileZ = centerWorldTileZ;
+
+        float groundTileModelCenterY = -TILE_THICKNESS / 2.0f;
+
+        int gridSize = VISIBLE_TILES_RADIUS * 2 + 1;
+
+        for (int screenX = 0; screenX < gridSize; screenX++) {
+            for (int screenZ = 0; screenZ < gridSize; screenZ++) {
+                int worldTileX = centerWorldTileX + screenX - VISIBLE_TILES_RADIUS;
+                int worldTileZ = centerWorldTileZ + screenZ - VISIBLE_TILES_RADIUS;
+
+                ModelInstance tileInstance = visibleTileInstances[screenX][screenZ];
+
+                float tileCenterX = worldTileX * TILE_SIZE;
+                float tileCenterZ = worldTileZ * TILE_SIZE;
+                tileInstance.transform.setToTranslation(tileCenterX, groundTileModelCenterY, tileCenterZ);
+
+                boolean isLightTile = (Math.floorMod(worldTileX, 2) + Math.floorMod(worldTileZ, 2)) % 2 == 0;
+
+                ColorAttribute colorAttribute = (ColorAttribute) tileInstance.materials.get(0).get(ColorAttribute.Diffuse);
+                if (colorAttribute != null) {
+                    if (isLightTile) {
+                        colorAttribute.color.set(Color.LIGHT_GRAY);
+                    } else {
+                        colorAttribute.color.set(Color.DARK_GRAY);
+                    }
                 }
-
-                float xPos = (i - TILES_COUNT_X / 2.0f + 0.5f) * TILE_SIZE;
-                float zPos = (j - TILES_COUNT_Z / 2.0f + 0.5f) * TILE_SIZE;
-
-                tileInstance.transform.setToTranslation(xPos, groundTileCenterY, zPos);
-                groundTiles.add(tileInstance);
             }
         }
     }
+
 
     @Override
     public void render(float delta) {
         handleInput(delta);
         updateCar(delta);
+        updateInfiniteGround(false);
         updateCamera();
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -112,9 +138,14 @@ public class DemoRacing3D implements Screen {
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
 
         modelBatch.begin(camera);
-        for (ModelInstance tile : groundTiles) {
-            modelBatch.render(tile, environment);
+
+        int gridSize = VISIBLE_TILES_RADIUS * 2 + 1;
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                modelBatch.render(visibleTileInstances[i][j], environment);
+            }
         }
+
         modelBatch.render(carInstance, environment);
         modelBatch.end();
     }
@@ -156,7 +187,6 @@ public class DemoRacing3D implements Screen {
 
         Vector3 velocity = forwardDirection.scl(carSpeed * deltaTime);
         carPosition.add(velocity);
-
         carPosition.y = 0.5f / 2.0f;
 
         carInstance.transform.setToTranslation(carPosition).rotate(carRotation);
@@ -166,11 +196,9 @@ public class DemoRacing3D implements Screen {
         Vector3 desiredPosition = new Vector3(cameraOffset);
         Quaternion carYRotation = new Quaternion().setFromAxis(Vector3.Y, carRotation.getAngleAround(Vector3.Y));
         carYRotation.transform(desiredPosition);
-
         desiredPosition.add(carPosition);
 
         camera.position.set(desiredPosition);
-
         Vector3 lookAtPoint = new Vector3(carPosition.x, carPosition.y + 0.2f, carPosition.z);
         camera.lookAt(lookAtPoint);
         camera.up.set(Vector3.Y);
@@ -199,8 +227,6 @@ public class DemoRacing3D implements Screen {
     public void dispose() {
         modelBatch.dispose();
         carModel.dispose();
-        if (lightGrayTileModel != null) lightGrayTileModel.dispose();
-        if (darkGrayTileModel != null) darkGrayTileModel.dispose();
-        if (groundTiles != null) groundTiles.clear();
+        if (tileModel != null) tileModel.dispose();
     }
 }
